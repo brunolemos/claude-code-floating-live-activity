@@ -346,6 +346,43 @@ class UpdateChecker {
     }
 }
 
+// MARK: - Launch at Login
+
+class LaunchAtLoginManager {
+    private static let plistName = "org.brunolemos.claude-live-activity"
+
+    private static var plistPath: String {
+        "\(NSHomeDirectory())/Library/LaunchAgents/\(plistName).plist"
+    }
+
+    static var isEnabled: Bool {
+        FileManager.default.fileExists(atPath: plistPath)
+    }
+
+    static func setEnabled(_ enabled: Bool) {
+        if enabled {
+            let dir = "\(NSHomeDirectory())/Library/LaunchAgents"
+            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+
+            let appPath = Bundle.main.executablePath
+                ?? "\(NSHomeDirectory())/Applications/ClaudeLiveActivity.app/Contents/MacOS/ClaudeLiveActivity"
+
+            let plist: [String: Any] = [
+                "Label": plistName,
+                "ProgramArguments": [appPath],
+                "RunAtLoad": true,
+                "KeepAlive": true
+            ]
+
+            if let data = try? PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0) {
+                try? data.write(to: URL(fileURLWithPath: plistPath))
+            }
+        } else {
+            try? FileManager.default.removeItem(atPath: plistPath)
+        }
+    }
+}
+
 // MARK: - View Model
 
 struct SessionInfo: Identifiable {
@@ -845,7 +882,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         setupMenuBarIcon()
-        statusItem.button?.action = #selector(togglePill)
+        statusItem.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        statusItem.button?.action = #selector(statusItemClicked(_:))
         statusItem.button?.target = self
 
         try? FileManager.default.createDirectory(atPath: sessionsDir, withIntermediateDirectories: true)
@@ -912,9 +950,66 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Menu Bar
 
+    @objc private func statusItemClicked(_ sender: Any?) {
+        guard let event = NSApp.currentEvent else { return }
+        if event.type == .rightMouseUp {
+            showContextMenu()
+        } else {
+            togglePill()
+        }
+    }
+
     @objc private func togglePill() {
         floatingWindow.toggle()
         updateMenuBarState()
+    }
+
+    private func showContextMenu() {
+        let menu = NSMenu()
+
+        let loginItem = NSMenuItem(title: "Start at Login", action: #selector(toggleStartAtLogin), keyEquivalent: "")
+        loginItem.target = self
+        loginItem.state = LaunchAtLoginManager.isEnabled ? .on : .off
+        menu.addItem(loginItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        if floatingWindow.viewModel.isUpdating {
+            let item = NSMenuItem(title: "Updating…", action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            menu.addItem(item)
+        } else if floatingWindow.viewModel.updateAvailable {
+            let item = NSMenuItem(title: "Update Available — Install Now", action: #selector(checkForUpdates), keyEquivalent: "")
+            item.target = self
+            menu.addItem(item)
+        } else {
+            let item = NSMenuItem(title: "Up to Date", action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            menu.addItem(item)
+        }
+
+        menu.addItem(NSMenuItem.separator())
+
+        let quitItem = NSMenuItem(title: "Quit", action: #selector(quitApp), keyEquivalent: "")
+        quitItem.target = self
+        menu.addItem(quitItem)
+
+        statusItem.menu = menu
+        statusItem.button?.performClick(nil)
+        statusItem.menu = nil
+    }
+
+    @objc private func toggleStartAtLogin() {
+        LaunchAtLoginManager.setEnabled(!LaunchAtLoginManager.isEnabled)
+    }
+
+    @objc private func checkForUpdates() {
+        floatingWindow.viewModel.isUpdating = true
+        updateChecker?.performUpdate()
+    }
+
+    @objc private func quitApp() {
+        NSApp.terminate(nil)
     }
 
     private func updateMenuBarState() {
