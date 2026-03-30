@@ -648,7 +648,7 @@ struct LiveActivityView: View {
                 }
             }
         }
-        .frame(minWidth: 200, maxWidth: 1200, minHeight: 120, maxHeight: 250, alignment: .top)
+        .frame(minWidth: 200, maxWidth: 1200, minHeight: 150, maxHeight: 250, alignment: .top)
         .background(
             RoundedRectangle(cornerRadius: 22, style: .continuous)
                 .fill(Color(nsColor: NSColor(red: 0.11, green: 0.11, blue: 0.12, alpha: 1)))
@@ -810,7 +810,7 @@ class FloatingWindow {
         p.isMovableByWindowBackground = true
         p.contentView = hostingView
         p.alphaValue = 0
-        p.minSize = NSSize(width: 200, height: 120)
+        p.minSize = NSSize(width: 200, height: 150)
         p.maxSize = NSSize(width: 1200, height: 250)
         p.contentMinSize = NSSize(width: 200, height: 120)
         p.contentMaxSize = NSSize(width: 1200, height: 250)
