@@ -7,5 +7,6 @@ let package = Package(
     targets: [
         .executableTarget(name: "ClaudeLiveActivity", path: "Sources/App"),
         .executableTarget(name: "claude-status-hook", path: "Sources/Hook"),
+        .executableTarget(name: "run-tests", path: "Tests"),
     ]
 )
