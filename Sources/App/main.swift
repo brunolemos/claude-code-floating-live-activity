@@ -734,16 +734,27 @@ class FloatingWindow {
         get { UserDefaults.standard.bool(forKey: "pillHidden") }
         set { UserDefaults.standard.set(newValue, forKey: "pillHidden") }
     }
+    var autoShowOnWaiting: Bool {
+        get { !UserDefaults.standard.bool(forKey: "autoShowOnWaitingDisabled") }
+        set { UserDefaults.standard.set(!newValue, forKey: "autoShowOnWaitingDisabled") }
+    }
+    var autoShowOnDone: Bool {
+        get { !UserDefaults.standard.bool(forKey: "autoShowOnDoneDisabled") }
+        set { UserDefaults.standard.set(!newValue, forKey: "autoShowOnDoneDisabled") }
+    }
 
     private(set) var isShown = false
+    private var dismissedAt: Double = 0
 
     func toggle() {
         if panel == nil { createPanel() }
         if isShown {
+            dismissedAt = Date().timeIntervalSince1970
             userHidden = true
             isShown = false
             hide()
         } else {
+            dismissedAt = 0
             userHidden = false
             isShown = true
             show()
@@ -751,18 +762,24 @@ class FloatingWindow {
     }
 
     func update() {
-        guard !userHidden else { return }
-        let shouldShow = !viewModel.sessions.isEmpty
+        let hasAnySessions = !viewModel.sessions.isEmpty
         let hasAnyActive = viewModel.sessions.contains { $0.status.isActive }
+        let hasAnyWaiting = viewModel.sessions.contains { $0.status.status == "waiting" }
+        let allDone = hasAnySessions && !hasAnyActive && !hasAnyWaiting
 
-        if shouldShow {
+        // Check if any session changed state after dismissal
+        let hasNewEvent = viewModel.sessions.contains { $0.status.timestamp > dismissedAt }
+
+        if hasAnyWaiting && autoShowOnWaiting && hasNewEvent {
+            userHidden = false
             show()
-            hideTimer?.invalidate()
-            if !hasAnyActive {
-                hideTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: false) { [weak self] _ in  // 5 min
-                    self?.hide()
-                }
-            }
+        } else if allDone && autoShowOnDone && hasNewEvent {
+            userHidden = false
+            show()
+        } else if userHidden {
+            return
+        } else if hasAnySessions {
+            show()
         } else {
             hide()
         }
@@ -976,6 +993,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func showContextMenu() {
         let menu = NSMenu()
 
+        let autoShowWaitingItem = NSMenuItem(title: "Automatically Open When Waiting for Input", action: #selector(toggleAutoShowOnWaiting), keyEquivalent: "")
+        autoShowWaitingItem.target = self
+        autoShowWaitingItem.state = floatingWindow.autoShowOnWaiting ? .on : .off
+        menu.addItem(autoShowWaitingItem)
+
+        let autoShowDoneItem = NSMenuItem(title: "Automatically Open When Done", action: #selector(toggleAutoShowOnDone), keyEquivalent: "")
+        autoShowDoneItem.target = self
+        autoShowDoneItem.state = floatingWindow.autoShowOnDone ? .on : .off
+        menu.addItem(autoShowDoneItem)
+
+        menu.addItem(NSMenuItem.separator())
+
         let loginItem = NSMenuItem(title: "Start at Login", action: #selector(toggleStartAtLogin), keyEquivalent: "")
         loginItem.target = self
         loginItem.state = LaunchAtLoginManager.isEnabled ? .on : .off
@@ -1010,6 +1039,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func toggleStartAtLogin() {
         LaunchAtLoginManager.setEnabled(!LaunchAtLoginManager.isEnabled)
+    }
+
+    @objc private func toggleAutoShowOnWaiting() {
+        floatingWindow.autoShowOnWaiting = !floatingWindow.autoShowOnWaiting
+    }
+
+    @objc private func toggleAutoShowOnDone() {
+        floatingWindow.autoShowOnDone = !floatingWindow.autoShowOnDone
     }
 
     @objc private func checkForUpdates() {

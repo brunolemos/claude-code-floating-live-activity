@@ -4,7 +4,7 @@ import Foundation
 // and writes per-session status to ~/.claude/live-sessions/<session_id>.json
 
 let sessionsDir = "\(NSHomeDirectory())/.claude/live-sessions"
-let timestamp = Int(Date().timeIntervalSince1970)
+let timestamp = Date().timeIntervalSince1970
 
 let hookType: String
 if CommandLine.arguments.count > 1 {
@@ -160,9 +160,14 @@ case "start":
     status["message"] = "Starting..."
 
 case "pre":
-    status["status"] = "tool_use"
+    if toolName == "AskUserQuestion" {
+        status["status"] = "waiting"
+        status["message"] = questionText.isEmpty ? "Waiting for input" : String(questionText.prefix(80))
+    } else {
+        status["status"] = "tool_use"
+        status["message"] = message
+    }
     status["tool"] = toolName
-    status["message"] = message
     if !questionText.isEmpty {
         status["last_message"] = questionText
     }
