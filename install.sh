@@ -3,7 +3,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 INSTALL_DIR="$HOME/.claude/bin"
-APP_NAME="ClaudeLiveStatus"
+APP_NAME="ClaudeLiveActivity"
 BUNDLE_ID="com.claude.live-status"
 WIDGET_BUNDLE_ID="com.claude.live-status.widget"
 APP_DIR="$HOME/Applications/$APP_NAME.app"
@@ -41,7 +41,7 @@ rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS"
 mkdir -p "$APP_DIR/Contents/PlugIns/ClaudeStatusWidget.appex/Contents/MacOS"
 
-cp .build/release/ClaudeLiveStatus "$APP_DIR/Contents/MacOS/"
+cp .build/release/ClaudeLiveActivity "$APP_DIR/Contents/MacOS/"
 
 cat > "$APP_DIR/Contents/Info.plist" << PLIST
 <?xml version="1.0" encoding="UTF-8"?>

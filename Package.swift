@@ -2,10 +2,10 @@
 import PackageDescription
 
 let package = Package(
-    name: "ClaudeLiveStatus",
+    name: "ClaudeLiveActivity",
     platforms: [.macOS(.v13)],
     targets: [
-        .executableTarget(name: "ClaudeLiveStatus", path: "Sources/App"),
+        .executableTarget(name: "ClaudeLiveActivity", path: "Sources/App"),
         .executableTarget(name: "claude-status-hook", path: "Sources/Hook"),
     ]
 )

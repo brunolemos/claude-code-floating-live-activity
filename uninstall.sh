@@ -1,13 +1,13 @@
 #!/bin/bash
 
 PLIST_NAME="com.claude.live-status"
-APP_DIR="$HOME/Applications/ClaudeLiveStatus.app"
+APP_DIR="$HOME/Applications/ClaudeLiveActivity.app"
 INSTALL_DIR="$HOME/.claude/bin"
 LAUNCHAGENT_DIR="$HOME/Library/LaunchAgents"
 
-echo "Stopping ClaudeLiveStatus..."
+echo "Stopping ClaudeLiveActivity..."
 launchctl bootout "gui/$(id -u)/$PLIST_NAME" 2>/dev/null
-pkill -f ClaudeLiveStatus 2>/dev/null
+pkill -f ClaudeLiveActivity 2>/dev/null
 
 echo "Removing files..."
 rm -rf "$APP_DIR"
