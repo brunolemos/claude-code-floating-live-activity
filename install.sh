@@ -184,6 +184,8 @@ cat > "$LAUNCHAGENT_DIR/$PLIST_NAME.plist" << EOF
 EOF
 
 launchctl bootout "gui/$(id -u)/$PLIST_NAME" 2>/dev/null || true
+pkill -9 -f "$APP_NAME" 2>/dev/null || true
+sleep 0.5
 launchctl bootstrap "gui/$(id -u)" "$LAUNCHAGENT_DIR/$PLIST_NAME.plist"
 
 echo ""
