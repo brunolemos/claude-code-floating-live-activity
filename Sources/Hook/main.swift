@@ -168,13 +168,8 @@ case "pre":
     }
 
 case "post":
-    if toolName == "AskUserQuestion" {
-        status["status"] = "waiting"
-        status["message"] = toolOutput.isEmpty ? "Waiting for input" : String(toolOutput.prefix(80))
-    } else {
-        status["status"] = "thinking"
-        status["message"] = "Thinking..."
-    }
+    status["status"] = "thinking"
+    status["message"] = "Thinking..."
     if !toolOutput.isEmpty {
         status["last_message"] = toolOutput
     }
