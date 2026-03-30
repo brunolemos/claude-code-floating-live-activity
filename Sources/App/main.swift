@@ -229,6 +229,134 @@ class SessionManager {
     }
 }
 
+// MARK: - Update Checker
+
+class UpdateChecker {
+    private let repo = "brunolemos/claude-code-floating-live-activity"
+    private var installedHash: String?
+    private var sourceDir: String?
+    private var installedFingerprint: String?
+    private var checkTimer: Timer?
+    var onUpdateAvailable: ((Bool) -> Void)?
+
+    private var isLocalDev: Bool {
+        guard let dir = sourceDir, !dir.isEmpty else { return false }
+        return FileManager.default.fileExists(atPath: "\(dir)/.git")
+    }
+
+    func start() {
+        loadInstalledVersion()
+        check()
+        let interval: TimeInterval = isLocalDev ? 10 : 6 * 3600
+        checkTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+            self?.check()
+        }
+    }
+
+    private func loadInstalledVersion() {
+        let resources = (Bundle.main.bundlePath as NSString).appendingPathComponent("Contents/Resources")
+        installedHash = readFile("\(resources)/version.txt")
+        sourceDir = readFile("\(resources)/source-dir.txt")
+        installedFingerprint = readFile("\(resources)/source-fingerprint.txt")
+    }
+
+    private func readFile(_ path: String) -> String? {
+        try? String(contentsOfFile: path, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    func check() {
+        guard let hash = installedHash, !hash.isEmpty, hash != "unknown" else { return }
+        if isLocalDev {
+            checkLocal()
+        } else {
+            checkRemote(installedHash: hash)
+        }
+    }
+
+    private func checkLocal() {
+        guard let dir = sourceDir else { return }
+        let safe = escaped(dir)
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self = self else { return }
+            let currentHead = self.shell("git -C '\(safe)' rev-parse HEAD")
+            let currentFP = self.shell(
+                "cd '\(safe)' && { git diff HEAD 2>/dev/null; git ls-files --others --exclude-standard 2>/dev/null; } | shasum -a 256 | cut -d' ' -f1"
+            )
+            let headChanged = currentHead != nil && currentHead != self.installedHash
+            let fpChanged = currentFP != nil && currentFP != self.installedFingerprint
+            DispatchQueue.main.async {
+                self.onUpdateAvailable?(headChanged || fpChanged)
+            }
+        }
+    }
+
+    private func checkRemote(installedHash: String) {
+        guard let url = URL(string: "https://api.github.com/repos/\(repo)/commits/main") else { return }
+        var request = URLRequest(url: url)
+        request.setValue("application/vnd.github.v3+json", forHTTPHeaderField: "Accept")
+        request.timeoutInterval = 15
+        URLSession.shared.dataTask(with: request) { [weak self] data, _, _ in
+            guard let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let sha = json["sha"] as? String
+            else { return }
+            let available = !sha.hasPrefix(installedHash) && !installedHash.hasPrefix(sha)
+            DispatchQueue.main.async {
+                self?.onUpdateAvailable?(available)
+            }
+        }.resume()
+    }
+
+    private func escaped(_ path: String) -> String {
+        path.replacingOccurrences(of: "'", with: "'\\''")
+    }
+
+    private func shell(_ command: String) -> String? {
+        let process = Process()
+        let pipe = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/bin/bash")
+        process.arguments = ["-c", command]
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        do { try process.run() } catch { return nil }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else { return nil }
+        return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    func performUpdate() {
+        let script: String
+        if isLocalDev, let dir = sourceDir {
+            script = """
+            #!/bin/bash
+            set -e
+            cd '\(escaped(dir))'
+            bash install.sh
+            """
+        } else {
+            script = """
+            #!/bin/bash
+            set -e
+            TEMP=$(mktemp -d)
+            git clone https://github.com/\(repo).git "$TEMP/repo" 2>/dev/null
+            cd "$TEMP/repo"
+            bash install.sh
+            rm -rf "$TEMP"
+            """
+        }
+
+        let tempScript = NSTemporaryDirectory() + "claude-live-update.sh"
+        try? script.write(toFile: tempScript, atomically: true, encoding: .utf8)
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/bash")
+        process.arguments = ["-c", "nohup /bin/bash '\(tempScript)' > /tmp/claude-live-update.log 2>&1 &"]
+        try? process.run()
+    }
+}
+
 // MARK: - View Model
 
 struct SessionInfo: Identifiable {
@@ -240,8 +368,11 @@ struct SessionInfo: Identifiable {
 class LiveActivityViewModel: ObservableObject {
     @Published var sessions: [SessionInfo] = []
     @Published var selectedId: String?
+    @Published var updateAvailable = false
+    @Published var isUpdating = false
     weak var window: NSPanel?
     var onClose: (() -> Void)?
+    var onUpdate: (() -> Void)?
 
     var selected: SessionInfo? { sessions.first { $0.id == selectedId } }
 
@@ -375,6 +506,29 @@ struct LiveActivityView: View {
                         .font(.system(size: 12, weight: .semibold, design: .rounded))
                         .foregroundStyle(.white.opacity(0.7))
                     Spacer()
+                    if model.isUpdating {
+                        HStack(spacing: 4) {
+                            ProgressView()
+                                .controlSize(.mini)
+                                .scaleEffect(0.7)
+                            Text("Updating…")
+                                .font(.system(size: 10, weight: .medium, design: .rounded))
+                        }
+                        .foregroundStyle(.white.opacity(0.5))
+                    } else if model.updateAvailable {
+                        HStack(spacing: 3) {
+                            Image(systemName: "arrow.down.circle.fill")
+                                .font(.system(size: 10))
+                            Text("Update")
+                                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                        }
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(.white.opacity(0.1)))
+                        .contentShape(Capsule())
+                        .onTapGesture { model.onUpdate?() }
+                    }
                     Image(systemName: "xmark")
                         .font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(.white.opacity(0.25))
@@ -664,6 +818,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var dirSource: DispatchSourceFileSystemObject?
     private var staleTimer: Timer?
+    private var updateChecker: UpdateChecker?
     private let sessionManager = SessionManager()
     private let floatingWindow = FloatingWindow()
 
@@ -688,6 +843,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let removed = self.sessionManager.cleanupStale()
             if !removed.isEmpty { self.updateAll() }
         }
+
+        let checker = UpdateChecker()
+        updateChecker = checker
+        checker.onUpdateAvailable = { [weak self] available in
+            self?.floatingWindow.viewModel.updateAvailable = available
+        }
+        floatingWindow.viewModel.onUpdate = { [weak self] in
+            self?.floatingWindow.viewModel.isUpdating = true
+            self?.updateChecker?.performUpdate()
+        }
+        checker.start()
     }
 
     private func watchSessionsDirectory() {

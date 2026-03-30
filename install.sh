@@ -100,6 +100,14 @@ cat > "$APPEX_DIR/Contents/Info.plist" << PLIST
 </plist>
 PLIST
 
+# Write version info for auto-update checks
+mkdir -p "$APP_DIR/Contents/Resources"
+GIT_HASH=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
+echo "$GIT_HASH" > "$APP_DIR/Contents/Resources/version.txt"
+echo "$SCRIPT_DIR" > "$APP_DIR/Contents/Resources/source-dir.txt"
+SOURCE_FP=$(cd "$SCRIPT_DIR" && { git diff HEAD 2>/dev/null; git ls-files --others --exclude-standard 2>/dev/null; } | shasum -a 256 | cut -d' ' -f1)
+echo "$SOURCE_FP" > "$APP_DIR/Contents/Resources/source-fingerprint.txt"
+
 # Step 4: Code sign (ad-hoc)
 echo -e "${GREEN}[4/6] Signing bundles...${NC}"
 codesign --force --sign - --deep "$APPEX_DIR"
