@@ -233,7 +233,7 @@ class UpdateChecker {
     private var checkTimer: Timer?
     var onUpdateAvailable: ((Bool) -> Void)?
 
-    private var isLocalDev: Bool {
+    var isLocalDev: Bool {
         guard let dir = sourceDir, !dir.isEmpty else { return false }
         return FileManager.default.fileExists(atPath: "\(dir)/.git")
     }
@@ -542,28 +542,30 @@ struct LiveActivityView: View {
                         .font(.system(size: 12, weight: .semibold, design: .rounded))
                         .foregroundStyle(.white.opacity(0.7))
                     Spacer()
-                    if model.isUpdating {
-                        HStack(spacing: 4) {
-                            ProgressView()
-                                .controlSize(.mini)
-                                .scaleEffect(0.7)
-                            Text("Updating…")
-                                .font(.system(size: 10, weight: .medium, design: .rounded))
+                    if !model.isLocalDev {
+                        if model.isUpdating {
+                            HStack(spacing: 4) {
+                                ProgressView()
+                                    .controlSize(.mini)
+                                    .scaleEffect(0.7)
+                                Text("Updating…")
+                                    .font(.system(size: 10, weight: .medium, design: .rounded))
+                            }
+                            .foregroundStyle(.white.opacity(0.5))
+                        } else if model.updateAvailable {
+                            HStack(spacing: 3) {
+                                Image(systemName: "arrow.down.circle.fill")
+                                    .font(.system(size: 10))
+                                Text("Update")
+                                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                            }
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Capsule().fill(.white.opacity(0.1)))
+                            .contentShape(Capsule())
+                            .onTapGesture { model.onUpdate?() }
                         }
-                        .foregroundStyle(.white.opacity(0.5))
-                    } else if model.updateAvailable {
-                        HStack(spacing: 3) {
-                            Image(systemName: "arrow.down.circle.fill")
-                                .font(.system(size: 10))
-                            Text("Update")
-                                .font(.system(size: 10, weight: .semibold, design: .rounded))
-                        }
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(Capsule().fill(.white.opacity(0.1)))
-                        .contentShape(Capsule())
-                        .onTapGesture { model.onUpdate?() }
                     }
                     Image(systemName: "xmark")
                         .font(.system(size: 9, weight: .semibold))
@@ -912,7 +914,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         let checker = UpdateChecker()
         updateChecker = checker
-        floatingWindow.viewModel.isLocalDev = checker.isLocalDev
         checker.onUpdateAvailable = { [weak self] available in
             self?.floatingWindow.viewModel.updateAvailable = available
         }
@@ -921,6 +922,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self?.updateChecker?.performUpdate()
         }
         checker.start()
+        floatingWindow.viewModel.isLocalDev = checker.isLocalDev
     }
 
     private func watchSessionsDirectory() {
