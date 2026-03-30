@@ -72,25 +72,49 @@ var status: [String: Any] = ["timestamp": timestamp, "session_id": safeId]
 if !transcriptPath.isEmpty { status["transcript_path"] = transcriptPath }
 if !cwd.isEmpty { status["cwd"] = cwd }
 
-// Capture TTY by walking process tree (unique per Terminal tab)
-func findTTY() -> String? {
+// Walk process tree to find TTY and parent .app bundle
+func walkProcessTree() -> (tty: String?, app: String?) {
     var pid = getpid()
-    for _ in 0..<10 {
+    var tty: String?
+    var app: String?
+    for _ in 0..<20 {
         var info = kinfo_proc()
         var size = MemoryLayout<kinfo_proc>.stride
         var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
-        guard sysctl(&mib, 4, &info, &size, nil, 0) == 0 else { return nil }
-        let dev = info.kp_eproc.e_tdev
-        if dev != 0 && dev != UInt32.max, let name = devname(dev, S_IFCHR) {
-            return "/dev/\(String(cString: name))"
+        guard sysctl(&mib, 4, &info, &size, nil, 0) == 0 else { break }
+
+        if tty == nil {
+            let dev = info.kp_eproc.e_tdev
+            if dev != 0 && dev != UInt32.max, let name = devname(dev, S_IFCHR) {
+                tty = "/dev/\(String(cString: name))"
+            }
         }
+
         let ppid = info.kp_eproc.e_ppid
-        if ppid <= 1 { return nil }
+        if ppid <= 1 { break }
         pid = ppid
+
+        if app == nil {
+            var pathBuf = [CChar](repeating: 0, count: 4096)
+            let ret = proc_pidpath(pid, &pathBuf, UInt32(pathBuf.count))
+            if ret > 0 {
+                let path = String(cString: pathBuf)
+                if let dotApp = path.range(of: ".app/") {
+                    let before = path[..<dotApp.lowerBound]
+                    if let slash = before.lastIndex(of: "/") {
+                        app = String(before[before.index(after: slash)...])
+                    }
+                }
+            }
+        }
+
+        if tty != nil && app != nil { break }
     }
-    return nil
+    return (tty, app)
 }
-if let tty = findTTY() { status["tty"] = tty }
+let procInfo = walkProcessTree()
+if let tty = procInfo.tty { status["tty"] = tty }
+if let app = procInfo.app { status["terminal_app"] = app }
 
 switch hookType {
 case "pre":

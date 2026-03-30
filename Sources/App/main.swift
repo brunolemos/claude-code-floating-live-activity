@@ -13,6 +13,7 @@ struct ClaudeStatus: Codable {
     let lastMessage: String?
     let cwd: String?
     let tty: String?
+    let terminalApp: String?
     let timestamp: Double
 
     enum CodingKeys: String, CodingKey {
@@ -20,12 +21,13 @@ struct ClaudeStatus: Codable {
         case sessionId = "session_id"
         case transcriptPath = "transcript_path"
         case lastMessage = "last_message"
+        case terminalApp = "terminal_app"
     }
 
     static var idle: ClaudeStatus {
         ClaudeStatus(status: "idle", tool: nil, message: nil, sessionId: nil,
                      transcriptPath: nil, lastMessage: nil, cwd: nil, tty: nil,
-                     timestamp: Date().timeIntervalSince1970)
+                     terminalApp: nil, timestamp: Date().timeIntervalSince1970)
     }
 
     var isStale: Bool { Date().timeIntervalSince1970 - timestamp > 600 }  // 10 minutes
@@ -264,18 +266,32 @@ class LiveActivityViewModel: ObservableObject {
     func focusTerminal(for sessionId: String? = nil) {
         let id = sessionId ?? selectedId
         guard let session = sessions.first(where: { $0.id == id }) else {
-            runOsascript("tell application \"Terminal\" to activate")
+            activateApp("Terminal")
             return
         }
 
-        let ttyPath = session.status.tty ?? ""
-        guard !ttyPath.isEmpty else {
-            runOsascript("tell application \"Terminal\" to activate")
+        let app = session.status.terminalApp
+        let tty = session.status.tty ?? ""
+
+        switch app {
+        case "Terminal":
+            focusTerminalAppByTTY(tty)
+        case "iTerm", "iTerm2":
+            focusiTermByTTY(tty)
+        case .some(let name) where !name.isEmpty:
+            activateApp(name)
+        default:
+            activateApp("Terminal")
+        }
+    }
+
+    private func focusTerminalAppByTTY(_ tty: String) {
+        guard !tty.isEmpty else {
+            activateApp("Terminal")
             return
         }
-
-        let safeTty = ttyPath.replacingOccurrences(of: "\"", with: "\\\"")
-        let script = """
+        let safeTty = tty.replacingOccurrences(of: "\"", with: "\\\"")
+        runOsascript("""
         tell application "Terminal"
             activate
             repeat with w in windows
@@ -288,8 +304,41 @@ class LiveActivityViewModel: ObservableObject {
                 end repeat
             end repeat
         end tell
-        """
-        runOsascript(script)
+        """)
+    }
+
+    private func focusiTermByTTY(_ tty: String) {
+        guard !tty.isEmpty else {
+            activateApp("iTerm")
+            return
+        }
+        let safeTty = tty.replacingOccurrences(of: "\"", with: "\\\"")
+        runOsascript("""
+        tell application "iTerm2"
+            activate
+            repeat with w in windows
+                repeat with t in tabs of w
+                    repeat with s in sessions of t
+                        if tty of s is "\(safeTty)" then
+                            select s
+                            return
+                        end if
+                    end repeat
+                end repeat
+            end repeat
+        end tell
+        """)
+    }
+
+    private func activateApp(_ name: String) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+            process.arguments = ["-a", name]
+            process.standardOutput = nil
+            process.standardError = nil
+            try? process.run()
+        }
     }
 
     private func runOsascript(_ script: String) {
