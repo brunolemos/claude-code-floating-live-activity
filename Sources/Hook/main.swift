@@ -159,8 +159,13 @@ case "pre":
     status["message"] = message
 
 case "post":
-    status["status"] = "thinking"
-    status["message"] = "Thinking..."
+    if toolName == "AskUserQuestion" {
+        status["status"] = "waiting"
+        status["message"] = toolOutput.isEmpty ? "Waiting for input" : String(toolOutput.prefix(80))
+    } else {
+        status["status"] = "thinking"
+        status["message"] = "Thinking..."
+    }
     if !toolOutput.isEmpty {
         status["last_message"] = toolOutput
     }
@@ -170,7 +175,14 @@ case "notify":
     status["message"] = message.isEmpty ? "Needs attention" : message
 
 case "stop":
-    status["status"] = "completed"
+    // Preserve "waiting" status if session is waiting for user input
+    var existingIsWaiting = false
+    if let existingData = try? Data(contentsOf: URL(fileURLWithPath: statusPath)),
+       let existing = try? JSONSerialization.jsonObject(with: existingData) as? [String: Any],
+       existing["status"] as? String == "waiting" {
+        existingIsWaiting = true
+    }
+    status["status"] = existingIsWaiting ? "waiting" : "completed"
     if !lastAssistantMessage.isEmpty {
         status["last_message"] = lastAssistantMessage
     }
