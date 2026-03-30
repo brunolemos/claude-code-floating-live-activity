@@ -624,6 +624,10 @@ struct LiveActivityView: View {
             .onTapGesture {
                 flash()
                 model.focusTerminal()
+                let allDone = !model.sessions.isEmpty && model.sessions.allSatisfy {
+                    $0.status.status == "completed" || $0.status.isStale
+                }
+                if allDone { model.onClose?() }
             }
 
             // Bottom tabs — pinned at bottom
