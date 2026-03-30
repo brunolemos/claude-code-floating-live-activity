@@ -777,8 +777,10 @@ class FloatingWindow {
             $0.status.status == "tool_use" || $0.status.status == "thinking"
         }
 
-        // Check if any session changed state after dismissal
-        let hasNewEvent = viewModel.sessions.contains { $0.status.timestamp > dismissedAt }
+        // Check if any session changed state after dismissal (with 2s grace period)
+        let gracePeriod = dismissedAt + 2
+        let now = Date().timeIntervalSince1970
+        let hasNewEvent = now > gracePeriod && viewModel.sessions.contains { $0.status.timestamp > dismissedAt }
 
         if hasAnyWaiting && autoShowOnWaiting && hasNewEvent {
             userHidden = false
