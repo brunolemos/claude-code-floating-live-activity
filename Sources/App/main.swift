@@ -742,6 +742,10 @@ class FloatingWindow {
         get { !UserDefaults.standard.bool(forKey: "autoShowOnDoneDisabled") }
         set { UserDefaults.standard.set(!newValue, forKey: "autoShowOnDoneDisabled") }
     }
+    var autoCloseWhileThinking: Bool {
+        get { UserDefaults.standard.bool(forKey: "autoCloseWhileThinking") }
+        set { UserDefaults.standard.set(newValue, forKey: "autoCloseWhileThinking") }
+    }
 
     private(set) var isShown = false
     private var dismissedAt: Double = 0
@@ -763,9 +767,11 @@ class FloatingWindow {
 
     func update() {
         let hasAnySessions = !viewModel.sessions.isEmpty
-        let hasAnyActive = viewModel.sessions.contains { $0.status.isActive }
         let hasAnyWaiting = viewModel.sessions.contains { $0.status.status == "waiting" }
-        let allDone = hasAnySessions && !hasAnyActive && !hasAnyWaiting
+        let hasAnyDone = viewModel.sessions.contains { $0.status.status == "completed" }
+        let allThinking = hasAnySessions && viewModel.sessions.allSatisfy {
+            $0.status.status == "tool_use" || $0.status.status == "thinking"
+        }
 
         // Check if any session changed state after dismissal
         let hasNewEvent = viewModel.sessions.contains { $0.status.timestamp > dismissedAt }
@@ -773,11 +779,13 @@ class FloatingWindow {
         if hasAnyWaiting && autoShowOnWaiting && hasNewEvent {
             userHidden = false
             show()
-        } else if allDone && autoShowOnDone && hasNewEvent {
+        } else if hasAnyDone && autoShowOnDone && hasNewEvent {
             userHidden = false
             show()
         } else if userHidden {
             return
+        } else if allThinking && autoCloseWhileThinking {
+            hide()
         } else if hasAnySessions {
             show()
         } else {
@@ -898,6 +906,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var dirSource: DispatchSourceFileSystemObject?
     private var pollTimer: Timer?
     private var staleTimer: Timer?
+    private var spinTimer: Timer?
+    private var isSpinning = false
     private var updateChecker: UpdateChecker?
     private let sessionManager = SessionManager()
     private let floatingWindow = FloatingWindow()
@@ -971,6 +981,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             isThinkingFor: { [weak self] id in self?.sessionManager.isThinking(for: id) ?? false }
         )
         floatingWindow.update()
+        updateMenuBarState()
         writeWidgetData()
     }
 
@@ -992,6 +1003,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func showContextMenu() {
         let menu = NSMenu()
+
+        let autoCloseItem = NSMenuItem(title: "Automatically Close While Thinking", action: #selector(toggleAutoCloseWhileThinking), keyEquivalent: "")
+        autoCloseItem.target = self
+        autoCloseItem.state = floatingWindow.autoCloseWhileThinking ? .on : .off
+        menu.addItem(autoCloseItem)
 
         let autoShowWaitingItem = NSMenuItem(title: "Automatically Open When Waiting for Input", action: #selector(toggleAutoShowOnWaiting), keyEquivalent: "")
         autoShowWaitingItem.target = self
@@ -1049,6 +1065,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         floatingWindow.autoShowOnDone = !floatingWindow.autoShowOnDone
     }
 
+    @objc private func toggleAutoCloseWhileThinking() {
+        floatingWindow.autoCloseWhileThinking = !floatingWindow.autoCloseWhileThinking
+    }
+
     @objc private func checkForUpdates() {
         floatingWindow.viewModel.isUpdating = true
         updateChecker?.performUpdate()
@@ -1060,18 +1080,67 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func updateMenuBarState() {
         statusItem.button?.appearsDisabled = !floatingWindow.isShown
+        let hasAnyActive = sessionManager.activeSessions.contains { $0.1.isActive && $0.1.status != "waiting" }
+        let hasAnyWaiting = sessionManager.activeSessions.contains { $0.1.status == "waiting" }
+
+        if hasAnyActive && !isSpinning {
+            startSpinning()
+        } else if !hasAnyActive && isSpinning {
+            stopSpinning()
+        }
+
+        // Pick the most important status for the icon color
+        let iconStatus: String
+        if hasAnyWaiting { iconStatus = "waiting" }
+        else if hasAnyActive {
+            iconStatus = sessionManager.activeSessions.first(where: { $0.1.isActive })?.1.status ?? "thinking"
+        } else if sessionManager.activeSessions.isEmpty { iconStatus = "idle" }
+        else { iconStatus = "completed" }
+        updateMenuBarIcon(status: iconStatus)
+    }
+
+    private func updateMenuBarIcon(status: String) {
+        guard let button = statusItem.button else { return }
+        button.title = ""
+        let color: NSColor
+        switch status {
+        case "waiting": color = .orange
+        case "completed": color = .systemGreen
+        case "tool_use": color = .systemBlue
+        case "thinking": color = .systemPurple
+        default: color = .white
+        }
+        if let img = NSImage(systemSymbolName: "sparkles", accessibilityDescription: "Claude") {
+            let config = NSImage.SymbolConfiguration(paletteColors: [color])
+            let tinted = img.withSymbolConfiguration(config) ?? img
+            tinted.isTemplate = false
+            button.image = tinted
+        }
+    }
+
+    private func startSpinning() {
+        guard let button = statusItem.button else { return }
+        isSpinning = true
+        button.wantsLayer = true
+        let animation = CABasicAnimation(keyPath: "opacity")
+        animation.fromValue = 1.0
+        animation.toValue = 0.2
+        animation.duration = 0.8
+        animation.autoreverses = true
+        animation.repeatCount = .infinity
+        animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        button.layer?.add(animation, forKey: "pulse")
+    }
+
+    private func stopSpinning() {
+        guard let button = statusItem.button else { return }
+        isSpinning = false
+        button.layer?.removeAnimation(forKey: "pulse")
+        button.layer?.opacity = 1.0
     }
 
     private func setupMenuBarIcon() {
-        let button = statusItem.button!
-        if let img = NSImage(systemSymbolName: "sparkles", accessibilityDescription: "Claude") {
-            img.isTemplate = true
-            button.image = img
-            button.title = ""
-        } else {
-            button.image = nil
-            button.title = " ✦"
-        }
+        updateMenuBarIcon(status: "idle")
     }
 
     private func writeWidgetData() {
