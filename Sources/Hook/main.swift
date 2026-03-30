@@ -180,27 +180,28 @@ case "post":
     }
 
 case "notify":
-    status["status"] = "waiting"
-    status["message"] = message.isEmpty ? "Needs attention" : message
-    // Preserve question text from AskUserQuestion, clear stale messages otherwise
+    // Don't overwrite "completed" — the Notification hook fires after Stop
+    // when Claude Code is ready for the next message
     if let existingData = try? Data(contentsOf: URL(fileURLWithPath: statusPath)),
        let existing = try? JSONSerialization.jsonObject(with: existingData) as? [String: Any],
-       existing["tool"] as? String == "AskUserQuestion",
-       let existingMsg = existing["last_message"] as? String, !existingMsg.isEmpty {
-        status["last_message"] = existingMsg
+       existing["status"] as? String == "completed" {
+        status["status"] = "completed"
     } else {
-        status["last_message"] = ""
+        status["status"] = "waiting"
+        status["message"] = message.isEmpty ? "Needs attention" : message
+        // Preserve question text from AskUserQuestion
+        if let existingData = try? Data(contentsOf: URL(fileURLWithPath: statusPath)),
+           let existing = try? JSONSerialization.jsonObject(with: existingData) as? [String: Any],
+           existing["tool"] as? String == "AskUserQuestion",
+           let existingMsg = existing["last_message"] as? String, !existingMsg.isEmpty {
+            status["last_message"] = existingMsg
+        } else {
+            status["last_message"] = ""
+        }
     }
 
 case "stop":
-    // Preserve "waiting" status if session is waiting for user input
-    var existingIsWaiting = false
-    if let existingData = try? Data(contentsOf: URL(fileURLWithPath: statusPath)),
-       let existing = try? JSONSerialization.jsonObject(with: existingData) as? [String: Any],
-       existing["status"] as? String == "waiting" {
-        existingIsWaiting = true
-    }
-    status["status"] = existingIsWaiting ? "waiting" : "completed"
+    status["status"] = "completed"
     if !lastAssistantMessage.isEmpty {
         status["last_message"] = lastAssistantMessage
     }
