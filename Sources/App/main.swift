@@ -29,7 +29,7 @@ struct ClaudeStatus: Codable {
     }
 
     var isStale: Bool { Date().timeIntervalSince1970 - timestamp > 600 }  // 10 minutes
-    var isActive: Bool { (status == "tool_use" || status == "waiting") && !isStale }
+    var isActive: Bool { (status == "tool_use" || status == "waiting" || status == "thinking") && !isStale }
 
     var displayText: String {
         switch status {
@@ -37,6 +37,7 @@ struct ClaudeStatus: Codable {
             if let msg = message, !msg.isEmpty { return truncate(msg, max: 42) }
             if let tool = tool { return friendlyToolName(tool) }
             return "Working..."
+        case "thinking": return "Thinking..."
         case "waiting": return message ?? "Waiting..."
         case "completed": return "Done"
         default: return "Idle"
@@ -51,6 +52,7 @@ struct ClaudeStatus: Codable {
     var statusColor: Color {
         switch status {
         case "tool_use": return .blue
+        case "thinking": return .purple
         case "waiting": return .orange
         case "completed": return .green
         default: return Color(white: 0.4)
@@ -336,7 +338,7 @@ struct LiveActivityView: View {
 
                 // Status
                 if let s = model.selected {
-                    let isWorking = s.status.status == "tool_use"
+                    let isWorking = s.status.status == "tool_use" || s.status.status == "thinking"
                     HStack(spacing: 8) {
                         Circle()
                             .fill(s.status.statusColor)

@@ -99,7 +99,8 @@ case "pre":
     status["message"] = message
 
 case "post":
-    status["status"] = "idle"
+    status["status"] = "thinking"
+    status["message"] = "Thinking..."
 
 case "notify":
     status["status"] = "waiting"
