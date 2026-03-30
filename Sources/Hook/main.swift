@@ -22,6 +22,7 @@ var conversationId = ""
 var transcriptPath = ""
 var lastAssistantMessage = ""
 var toolOutput = ""
+var questionText = ""
 var cwd = ""
 
 if let json = try? JSONSerialization.jsonObject(with: inputData) as? [String: Any] {
@@ -53,6 +54,11 @@ if let json = try? JSONSerialization.jsonObject(with: inputData) as? [String: An
             message = toolName == "Grep" ? "Searching: \(short)" : "Finding: \(short)"
         } else if let prompt = input["prompt"] as? String {
             message = "Agent: \(String(prompt.prefix(30)))"
+        } else if let questions = input["questions"] as? [[String: Any]],
+                  let firstQ = questions.first,
+                  let qText = firstQ["question"] as? String {
+            questionText = String(qText.prefix(200))
+            message = "Asking a question..."
         } else if let description = input["description"] as? String {
             message = String(description.prefix(30))
         }
@@ -157,6 +163,9 @@ case "pre":
     status["status"] = "tool_use"
     status["tool"] = toolName
     status["message"] = message
+    if !questionText.isEmpty {
+        status["last_message"] = questionText
+    }
 
 case "post":
     if toolName == "AskUserQuestion" {
@@ -173,6 +182,15 @@ case "post":
 case "notify":
     status["status"] = "waiting"
     status["message"] = message.isEmpty ? "Needs attention" : message
+    // Preserve question text from AskUserQuestion, clear stale messages otherwise
+    if let existingData = try? Data(contentsOf: URL(fileURLWithPath: statusPath)),
+       let existing = try? JSONSerialization.jsonObject(with: existingData) as? [String: Any],
+       existing["tool"] as? String == "AskUserQuestion",
+       let existingMsg = existing["last_message"] as? String, !existingMsg.isEmpty {
+        status["last_message"] = existingMsg
+    } else {
+        status["last_message"] = ""
+    }
 
 case "stop":
     // Preserve "waiting" status if session is waiting for user input

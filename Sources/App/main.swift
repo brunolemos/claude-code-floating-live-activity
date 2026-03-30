@@ -197,7 +197,12 @@ class SessionManager {
     }
 
     func lastMessage(for sessionId: String) -> String? {
-        tailers[sessionId]?.lastText
+        // When waiting for input, prefer the session's last_message (contains the question)
+        if sessions[sessionId]?.status == "waiting",
+           let msg = sessions[sessionId]?.lastMessage, !msg.isEmpty {
+            return msg
+        }
+        return tailers[sessionId]?.lastText
             ?? sessions[sessionId]?.lastMessage
     }
 
@@ -397,6 +402,7 @@ class LiveActivityViewModel: ObservableObject {
     @Published var selectedId: String?
     @Published var updateAvailable = false
     @Published var isUpdating = false
+    var isLocalDev = false
     weak var window: NSPanel?
     var onClose: (() -> Void)?
     var onUpdate: (() -> Void)?
@@ -906,6 +912,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         let checker = UpdateChecker()
         updateChecker = checker
+        floatingWindow.viewModel.isLocalDev = checker.isLocalDev
         checker.onUpdateAvailable = { [weak self] available in
             self?.floatingWindow.viewModel.updateAvailable = available
         }
