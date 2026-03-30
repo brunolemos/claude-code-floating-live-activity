@@ -21,6 +21,7 @@ var sessionId = ""
 var conversationId = ""
 var transcriptPath = ""
 var lastAssistantMessage = ""
+var toolOutput = ""
 var cwd = ""
 
 if let json = try? JSONSerialization.jsonObject(with: inputData) as? [String: Any] {
@@ -63,6 +64,17 @@ if let json = try? JSONSerialization.jsonObject(with: inputData) as? [String: An
 
     if let lastMsg = json["last_assistant_message"] as? String {
         lastAssistantMessage = String(lastMsg.prefix(500))
+    }
+
+    if let output = json["tool_output"] as? String, !output.isEmpty {
+        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let outputData = trimmed.data(using: .utf8),
+           let outputObj = try? JSONSerialization.jsonObject(with: outputData) as? [String: Any],
+           let innerOutput = outputObj["output"] as? String, !innerOutput.isEmpty {
+            toolOutput = String(innerOutput.trimmingCharacters(in: .whitespacesAndNewlines).prefix(500))
+        } else {
+            toolOutput = String(trimmed.prefix(500))
+        }
     }
 }
 
@@ -149,6 +161,9 @@ case "pre":
 case "post":
     status["status"] = "thinking"
     status["message"] = "Thinking..."
+    if !toolOutput.isEmpty {
+        status["last_message"] = toolOutput
+    }
 
 case "notify":
     status["status"] = "waiting"

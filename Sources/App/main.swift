@@ -99,98 +99,76 @@ struct WidgetEvent: Codable {
 
 class TranscriptTailer {
     private var currentPath: String?
-    private var fileOffset: UInt64 = 0
-    private var fileSource: DispatchSourceFileSystemObject?
-    private(set) var events: [WidgetEvent] = []
-    private let maxEvents = 20
+    private var pollTimer: Timer?
+    private(set) var lastText: String?
+    private(set) var isThinking = false
     let sessionId: String
     var onChange: (() -> Void)?
 
     init(sessionId: String) { self.sessionId = sessionId }
 
     func setTranscript(path: String?) {
-        guard let path = path, !path.isEmpty, path != currentPath else {
-            if currentPath != nil { readNewLines() }
-            return
-        }
-        currentPath = path
-        events.removeAll()
-        fileSource?.cancel()
-        fileSource = nil
-        if let handle = FileHandle(forReadingAtPath: path) {
-            let fileSize = handle.seekToEndOfFile()
-            let startFrom = fileSize > 5000 ? fileSize - 5000 : 0
-            handle.seek(toFileOffset: startFrom)
-            let data = handle.readDataToEndOfFile()
-            fileOffset = handle.offsetInFile
-            handle.closeFile()
-            if let text = String(data: data, encoding: .utf8) {
-                let lines = text.components(separatedBy: "\n")
-                let startIdx = startFrom > 0 ? 1 : 0
-                for i in startIdx..<lines.count { parseLine(lines[i]) }
+        guard let path = path, !path.isEmpty else { return }
+        if path != currentPath {
+            currentPath = path
+            lastText = nil
+            isThinking = false
+            pollTimer?.invalidate()
+            pollTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+                self?.refresh()
             }
         }
-        watchTranscript()
+        refresh()
     }
 
-    private func watchTranscript() {
+    func refresh() {
         guard let path = currentPath else { return }
-        fileSource?.cancel()
-        let fd = open(path, O_EVTONLY)
-        guard fd >= 0 else { return }
-        fileSource = DispatchSource.makeFileSystemObjectSource(
-            fileDescriptor: fd, eventMask: [.write, .extend], queue: .main)
-        fileSource?.setEventHandler { [weak self] in self?.readNewLines() }
-        fileSource?.setCancelHandler { close(fd) }
-        fileSource?.resume()
-    }
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)) else { return }
+        let tailBytes = 20000
+        let slice = data.count > tailBytes ? data.suffix(tailBytes) : data
+        guard let text = String(data: slice, encoding: .utf8) else { return }
 
-    func readNewLines() {
-        guard let path = currentPath,
-              let handle = FileHandle(forReadingAtPath: path) else { return }
-        handle.seek(toFileOffset: fileOffset)
-        let data = handle.readDataToEndOfFile()
-        let newOffset = handle.offsetInFile
-        handle.closeFile()
-        guard newOffset > fileOffset else { return }
-        fileOffset = newOffset
-        guard let text = String(data: data, encoding: .utf8) else { return }
-        var didAdd = false
-        for line in text.components(separatedBy: "\n") where !line.isEmpty {
-            if parseLine(line) { didAdd = true }
+        let lines = text.components(separatedBy: "\n").filter { !$0.isEmpty }
+        var changed = false
+
+        // Check if the last entry is a user message → Claude is thinking
+        var newThinking = false
+        if let lastLine = lines.last,
+           let lineData = lastLine.data(using: .utf8),
+           let obj = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any] {
+            let role = obj["type"] as? String ?? obj["role"] as? String ?? ""
+            newThinking = (role == "user")
         }
-        if didAdd { onChange?() }
-    }
+        if newThinking != isThinking { isThinking = newThinking; changed = true }
 
-    @discardableResult
-    private func parseLine(_ line: String) -> Bool {
-        guard !line.isEmpty,
-              let lineData = line.data(using: .utf8),
-              let obj = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any],
-              obj["type"] as? String == "assistant",
-              let msg = obj["message"] as? [String: Any],
-              let content = msg["content"] as? [[String: Any]]
-        else { return false }
-        var added = false
-        for item in content {
-            guard let itemType = item["type"] as? String else { continue }
-            if itemType == "text", let text = item["text"] as? String {
-                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !trimmed.isEmpty else { continue }
-                events.append(WidgetEvent(type: "text", text: String(trimmed.prefix(200)),
-                                          timestamp: Date().timeIntervalSince1970, sessionId: sessionId))
-                added = true
-            } else if itemType == "tool_use", let name = item["name"] as? String {
-                events.append(WidgetEvent(type: "tool", text: name,
-                                          timestamp: Date().timeIntervalSince1970, sessionId: sessionId))
-                added = true
+        // Find the last assistant text message (scan backward)
+        for line in lines.reversed() {
+            guard let lineData = line.data(using: .utf8),
+                  let obj = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any],
+                  (obj["type"] as? String == "assistant" || obj["role"] as? String == "assistant"),
+                  let msg = obj["message"] as? [String: Any],
+                  let content = msg["content"] as? [[String: Any]]
+            else { continue }
+
+            for item in content.reversed() {
+                if item["type"] as? String == "text",
+                   let itemText = item["text"] as? String {
+                    let trimmed = itemText.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !trimmed.isEmpty {
+                        let newText = String(trimmed.prefix(500))
+                        if newText != lastText { lastText = newText; changed = true }
+                        if changed { onChange?() }
+                        return
+                    }
+                }
             }
         }
-        while events.count > maxEvents { events.removeFirst() }
-        return added
+        if changed { onChange?() }
     }
 
-    func stop() { fileSource?.cancel(); fileSource = nil }
+    func stop() {
+        pollTimer?.invalidate(); pollTimer = nil
+    }
 }
 
 // MARK: - Session Manager
@@ -218,9 +196,13 @@ class SessionManager {
         onChange?()
     }
 
-    func events(for sessionId: String) -> [WidgetEvent] { tailers[sessionId]?.events ?? [] }
     func lastMessage(for sessionId: String) -> String? {
-        tailers[sessionId]?.events.last(where: { $0.type == "text" })?.text
+        tailers[sessionId]?.lastText
+            ?? sessions[sessionId]?.lastMessage
+    }
+
+    func isThinking(for sessionId: String) -> Bool {
+        tailers[sessionId]?.isThinking ?? false
     }
 
     func cleanupStale() -> [String] {
@@ -370,6 +352,7 @@ struct SessionInfo: Identifiable {
     let id: String
     var status: ClaudeStatus
     var lastMessage: String?
+    var transcriptThinking: Bool = false
 }
 
 class LiveActivityViewModel: ObservableObject {
@@ -383,11 +366,14 @@ class LiveActivityViewModel: ObservableObject {
 
     var selected: SessionInfo? { sessions.first { $0.id == selectedId } }
 
-    func updateSessions(_ active: [(String, ClaudeStatus)], lastMessageFor: (String) -> String?) {
-        // Update existing, add new
+    func updateSessions(_ active: [(String, ClaudeStatus)],
+                         lastMessageFor: (String) -> String?,
+                         isThinkingFor: (String) -> Bool) {
         var newSessions: [SessionInfo] = []
         for (id, status) in active {
-            newSessions.append(SessionInfo(id: id, status: status, lastMessage: lastMessageFor(id)))
+            newSessions.append(SessionInfo(id: id, status: status,
+                                           lastMessage: lastMessageFor(id),
+                                           transcriptThinking: isThinkingFor(id)))
         }
         sessions = newSessions
 
@@ -548,10 +534,13 @@ struct LiveActivityView: View {
 
                 // Status
                 if let s = model.selected {
-                    let isWorking = s.status.status == "tool_use" || s.status.status == "thinking"
+                    let thinking = s.transcriptThinking && s.status.status == "completed"
+                    let isWorking = s.status.status == "tool_use" || s.status.status == "thinking" || thinking
+                    let dotColor = thinking ? Color.purple : s.status.statusColor
+                    let statusText = thinking ? "Thinking..." : s.status.displayText
                     HStack(spacing: 8) {
                         Circle()
-                            .fill(s.status.statusColor)
+                            .fill(dotColor)
                             .frame(width: 8, height: 8)
                             .scaleEffect(isWorking && isPulsing ? 1.4 : 1.0)
                             .opacity(isWorking && isPulsing ? 1.0 : (isWorking ? 0.7 : 1.0))
@@ -563,13 +552,13 @@ struct LiveActivityView: View {
                             )
                             .onAppear { isPulsing = true }
 
-                        Text(s.status.displayText)
+                        Text(statusText)
                             .font(.system(size: 14, weight: .medium, design: .rounded))
-                            .foregroundStyle(s.status.isActive ? .white : .white.opacity(0.5))
+                            .foregroundStyle(isWorking || s.status.isActive ? .white : .white.opacity(0.5))
                             .lineLimit(1)
                     }
 
-                    if let msg = s.lastMessage {
+                    if !thinking, let msg = s.lastMessage {
                         Text(msg)
                             .font(.system(size: 11.5, weight: .regular, design: .rounded))
                             .foregroundStyle(.white.opacity(0.4))
@@ -912,10 +901,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func updateAll() {
-        // Update floating window view model
         floatingWindow.viewModel.updateSessions(
             sessionManager.activeSessions,
-            lastMessageFor: { [weak self] id in self?.sessionManager.lastMessage(for: id) }
+            lastMessageFor: { [weak self] id in self?.sessionManager.lastMessage(for: id) },
+            isThinkingFor: { [weak self] id in self?.sessionManager.isThinking(for: id) ?? false }
         )
         floatingWindow.update()
         writeWidgetData()
@@ -955,7 +944,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         let data = sessionManager.activeSessions.map { (id, st) in
             SessionData(sessionId: id, status: st.status, tool: st.tool, message: st.message,
-                        cwd: st.cwd, timestamp: st.timestamp, events: sessionManager.events(for: id))
+                        cwd: st.cwd, timestamp: st.timestamp, events: [])
         }
         let wd = WData(sessions: data, timestamp: Date().timeIntervalSince1970)
         let path = "\(NSHomeDirectory())/.claude/live-widget.json"
