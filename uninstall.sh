@@ -1,6 +1,6 @@
 #!/bin/bash
 
-PLIST_NAME="com.claude.live-status"
+PLIST_NAME="org.brunolemos.claude-live-activity"
 APP_DIR="$HOME/Applications/ClaudeLiveActivity.app"
 INSTALL_DIR="$HOME/.claude/bin"
 LAUNCHAGENT_DIR="$HOME/Library/LaunchAgents"
