@@ -562,10 +562,11 @@ struct LiveActivityView: View {
                             .lineLimit(1)
                     }
 
-                    Text(s.lastMessage ?? " ")
-                        .font(.system(size: 11.5, weight: .regular, design: .rounded))
-                        .foregroundStyle(.white.opacity(s.lastMessage != nil ? 0.4 : 0))
-                        .lineLimit(2)
+                    if let msg = s.lastMessage {
+                        Text(msg)
+                            .font(.system(size: 11.5, weight: .regular, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.4))
+                    }
                 } else {
                     Text("No active sessions")
                         .font(.system(size: 13, weight: .medium, design: .rounded))
@@ -577,14 +578,14 @@ struct LiveActivityView: View {
             .padding(.horizontal, 16)
             .padding(.top, 14)
             .padding(.bottom, 10)
-            .frame(width: 340, alignment: .leading)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .contentShape(Rectangle())
             .onTapGesture {
                 flash()
                 model.focusTerminal()
             }
 
-            // Bottom tabs — always visible
+            // Bottom tabs — pinned at bottom
             if !model.sessions.isEmpty {
                 Rectangle()
                     .fill(.white.opacity(0.06))
@@ -614,7 +615,7 @@ struct LiveActivityView: View {
                 }
             }
         }
-        .frame(width: 340)
+        .frame(minWidth: 200, maxWidth: 1200, minHeight: 120, maxHeight: 250, alignment: .top)
         .background(
             RoundedRectangle(cornerRadius: 22, style: .continuous)
                 .fill(Color(nsColor: NSColor(red: 0.11, green: 0.11, blue: 0.12, alpha: 1)))
@@ -671,10 +672,15 @@ struct SessionTabView: View {
     }
 }
 
-// MARK: - Custom Hosting View (accepts first mouse for immediate click response)
+// MARK: - Custom Panel & Hosting View
+
+class NonKeyPanel: NSPanel {
+    override var canBecomeKey: Bool { false }
+}
 
 class FirstMouseHostingView<Content: View>: NSHostingView<Content> {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override var needsPanelToBecomeKey: Bool { false }
 }
 
 // MARK: - Floating Window
@@ -725,19 +731,6 @@ class FloatingWindow {
         if panel == nil { createPanel() }
         guard let panel = panel else { return }
 
-        // Resize to fit content
-        if let hostingView = panel.contentView as? FirstMouseHostingView<LiveActivityView> {
-            let size = hostingView.fittingSize
-            let oldFrame = panel.frame
-            let newFrame = NSRect(
-                x: oldFrame.origin.x + (oldFrame.width - size.width),
-                y: oldFrame.origin.y + (oldFrame.height - size.height),
-                width: size.width,
-                height: size.height
-            )
-            panel.setFrame(newFrame, display: true, animate: panel.isVisible)
-        }
-
         if !panel.isVisible || panel.alphaValue < 1 {
             if !panel.isVisible { restorePosition() }
             panel.orderFront(nil)
@@ -759,14 +752,23 @@ class FloatingWindow {
     private func createPanel() {
         let view = LiveActivityView(model: viewModel)
         let hostingView = FirstMouseHostingView(rootView: view)
-        let size = hostingView.fittingSize
 
-        let p = NSPanel(
-            contentRect: NSRect(origin: .zero, size: size),
-            styleMask: [.borderless, .nonactivatingPanel],
+        let defaults = UserDefaults.standard
+        let w = defaults.object(forKey: "pillWidth") != nil ? defaults.double(forKey: "pillWidth") : 340
+        let h = defaults.object(forKey: "pillHeight") != nil ? defaults.double(forKey: "pillHeight") : hostingView.fittingSize.height
+
+        let p = NonKeyPanel(
+            contentRect: NSRect(origin: .zero, size: NSSize(width: w, height: h)),
+            styleMask: [.titled, .resizable, .nonactivatingPanel, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
+        p.titleVisibility = .hidden
+        p.titlebarAppearsTransparent = true
+        p.standardWindowButton(.closeButton)?.isHidden = true
+        p.standardWindowButton(.miniaturizeButton)?.isHidden = true
+        p.standardWindowButton(.zoomButton)?.isHidden = true
+        p.title = ""
         p.isOpaque = false
         p.backgroundColor = .clear
         p.hasShadow = true
@@ -775,6 +777,10 @@ class FloatingWindow {
         p.isMovableByWindowBackground = true
         p.contentView = hostingView
         p.alphaValue = 0
+        p.minSize = NSSize(width: 200, height: 120)
+        p.maxSize = NSSize(width: 1200, height: 250)
+        p.contentMinSize = NSSize(width: 200, height: 120)
+        p.contentMaxSize = NSSize(width: 1200, height: 250)
 
         viewModel.window = p
         panel = p
@@ -783,6 +789,10 @@ class FloatingWindow {
         NotificationCenter.default.addObserver(
             self, selector: #selector(windowDidMove(_:)),
             name: NSWindow.didMoveNotification, object: p
+        )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(windowDidResize(_:)),
+            name: NSWindow.didResizeNotification, object: p
         )
     }
 
@@ -806,9 +816,20 @@ class FloatingWindow {
     }
 
     @objc private func windowDidMove(_ notification: Notification) {
+        saveFrame()
+    }
+
+    @objc private func windowDidResize(_ notification: Notification) {
+        saveFrame()
+    }
+
+    private func saveFrame() {
         guard let panel = panel else { return }
-        UserDefaults.standard.set(panel.frame.origin.x, forKey: "pillX")
-        UserDefaults.standard.set(panel.frame.origin.y, forKey: "pillY")
+        let defaults = UserDefaults.standard
+        defaults.set(panel.frame.origin.x, forKey: "pillX")
+        defaults.set(panel.frame.origin.y, forKey: "pillY")
+        defaults.set(panel.frame.size.width, forKey: "pillWidth")
+        defaults.set(panel.frame.size.height, forKey: "pillHeight")
     }
 }
 
@@ -817,6 +838,7 @@ class FloatingWindow {
 class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var dirSource: DispatchSourceFileSystemObject?
+    private var pollTimer: Timer?
     private var staleTimer: Timer?
     private var updateChecker: UpdateChecker?
     private let sessionManager = SessionManager()
@@ -837,6 +859,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         watchSessionsDirectory()
         scanAllSessions()
+
+        pollTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+            self?.scanAllSessions()
+        }
 
         staleTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
             guard let self = self else { return }

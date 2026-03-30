@@ -18,6 +18,7 @@ let inputData = FileHandle.standardInput.readDataToEndOfFile()
 var toolName = ""
 var message = ""
 var sessionId = ""
+var conversationId = ""
 var transcriptPath = ""
 var lastAssistantMessage = ""
 var cwd = ""
@@ -25,8 +26,14 @@ var cwd = ""
 if let json = try? JSONSerialization.jsonObject(with: inputData) as? [String: Any] {
     toolName = json["tool_name"] as? String ?? ""
     sessionId = json["session_id"] as? String ?? ""
+    conversationId = json["conversation_id"] as? String ?? ""
     transcriptPath = json["transcript_path"] as? String ?? ""
     cwd = json["cwd"] as? String ?? ""
+
+    // Use workspace_roots for cwd when cwd is not provided
+    if cwd.isEmpty, let roots = json["workspace_roots"] as? [String], let first = roots.first {
+        cwd = first
+    }
 
     if let input = json["tool_input"] as? [String: Any] {
         if let filePath = input["file_path"] as? String {
@@ -59,8 +66,21 @@ if let json = try? JSONSerialization.jsonObject(with: inputData) as? [String: An
     }
 }
 
-// Use session_id for the filename, fallback to "default"
-let safeId = sessionId.isEmpty ? "default" : sessionId
+// Fallback cwd from the hook's own working directory
+if cwd.isEmpty {
+    cwd = FileManager.default.currentDirectoryPath
+}
+
+// Determine session ID: session_id (CLI) > conversation_id (Cursor) > cwd-based fallback
+let safeId: String
+if !sessionId.isEmpty {
+    safeId = sessionId
+} else if !conversationId.isEmpty {
+    safeId = conversationId
+} else {
+    safeId = cwd.replacingOccurrences(of: "/", with: "_")
+        .trimmingCharacters(in: CharacterSet(charactersIn: "_"))
+}
 let statusPath = "\(sessionsDir)/\(safeId).json"
 
 // Ensure directory exists
