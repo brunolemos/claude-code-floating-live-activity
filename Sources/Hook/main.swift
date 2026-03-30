@@ -137,6 +137,10 @@ if let tty = procInfo.tty { status["tty"] = tty }
 if let app = procInfo.app { status["terminal_app"] = app }
 
 switch hookType {
+case "start":
+    status["status"] = "thinking"
+    status["message"] = "Starting..."
+
 case "pre":
     status["status"] = "tool_use"
     status["tool"] = toolName

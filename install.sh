@@ -132,10 +132,12 @@ hook_cmd = os.path.expanduser("~/.claude/bin/claude-status-hook")
 settings.setdefault("hooks", {})
 
 hook_configs = {
+    "SessionStart": "start",
     "PreToolUse": "pre",
     "PostToolUse": "post",
     "Notification": "notify",
     "Stop": "stop",
+    "SessionEnd": "stop",
 }
 
 for event, arg in hook_configs.items():

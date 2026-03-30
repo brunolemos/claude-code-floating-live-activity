@@ -30,7 +30,14 @@ struct ClaudeStatus: Codable {
                      terminalApp: nil, timestamp: Date().timeIntervalSince1970)
     }
 
-    var isStale: Bool { Date().timeIntervalSince1970 - timestamp > 600 }  // 10 minutes
+    var isStale: Bool {
+        let age = Date().timeIntervalSince1970 - timestamp
+        switch status {
+        case "thinking": return age > 120   // 2 min — transient state, dead if no update
+        case "completed": return age > 300  // 5 min — show "Done" briefly then clean up
+        default: return age > 600           // 10 min — tool_use, waiting, idle
+        }
+    }
     var isActive: Bool { (status == "tool_use" || status == "waiting" || status == "thinking") && !isStale }
 
     var displayText: String {
