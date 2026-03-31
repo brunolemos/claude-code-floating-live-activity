@@ -376,7 +376,7 @@ class LaunchAtLoginManager {
                 "Label": plistName,
                 "ProgramArguments": [appPath],
                 "RunAtLoad": true,
-                "KeepAlive": true
+                "KeepAlive": ["SuccessfulExit": false]
             ]
 
             if let data = try? PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0) {

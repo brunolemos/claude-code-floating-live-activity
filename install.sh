@@ -178,7 +178,10 @@ cat > "$LAUNCHAGENT_DIR/$PLIST_NAME.plist" << EOF
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
-    <true/>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
 </dict>
 </plist>
 EOF
