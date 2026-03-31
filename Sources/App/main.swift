@@ -792,7 +792,7 @@ class FloatingWindow {
             return
         } else if allThinking && autoCloseWhileThinking {
             hide()
-        } else if hasAnySessions {
+        } else if viewModel.sessions.contains(where: { $0.status.isActive }) {
             show()
         } else {
             hide()
