@@ -1100,8 +1100,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if hasAnyWaiting { iconStatus = "waiting" }
         else if hasAnyActive {
             iconStatus = sessionManager.activeSessions.first(where: { $0.1.isActive })?.1.status ?? "thinking"
-        } else if sessionManager.activeSessions.isEmpty { iconStatus = "idle" }
-        else { iconStatus = "completed" }
+        } else { iconStatus = "idle" }
         updateMenuBarIcon(status: iconStatus)
     }
 
